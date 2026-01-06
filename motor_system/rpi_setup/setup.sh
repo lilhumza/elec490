@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-echo "=== Raspberry Pi system setup ==="
+echo "=== Raspberry Pi motor controller system setup (OS-managed Python) ==="
 
 # -------------------------
 # Resolve script directory
@@ -9,16 +9,14 @@ echo "=== Raspberry Pi system setup ==="
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REQ_FILE="${SCRIPT_DIR}/requirements.txt"
 
-# -------------------------
-# Check requirements.txt
-# -------------------------
+# Keep the check since you asked for it; we just won't pip-install it on trixie.
 if [ ! -f "${REQ_FILE}" ]; then
   echo "ERROR: requirements.txt not found in ${SCRIPT_DIR}"
   echo "Ensure requirements.txt is in the same directory as setup.sh"
   exit 1
 fi
-
-echo "Using requirements file: ${REQ_FILE}"
+echo "Found requirements.txt at: ${REQ_FILE}"
+echo "Note: On Debian trixie, Python deps are installed via apt (externally-managed env)."
 
 # -------------------------
 # OS update
@@ -33,17 +31,24 @@ sudo apt-get upgrade -y
 echo "[2/6] Installing OS-level dependencies..."
 sudo apt-get install -y \
   python3 \
-  python3-pip \
   python3-dev \
+  python3-pip \
   build-essential \
   git \
   curl \
   ca-certificates
 
 # -------------------------
+# Python libs via apt (OS-approved)
+# -------------------------
+echo "[3/6] Installing Python libraries via apt..."
+sudo apt-get install -y \
+  python3-requests
+
+# -------------------------
 # Build + install pigpio from source
 # -------------------------
-echo "[3/6] Building and installing pigpio from source..."
+echo "[4/6] Building and installing pigpio from source..."
 cd /tmp
 sudo rm -rf /tmp/pigpio
 git clone https://github.com/joan2937/pigpio.git
@@ -52,11 +57,19 @@ make
 sudo make install
 sudo ldconfig
 
+# Ensure the Python module is available (some distros/paths differ)
+echo "-> Verifying Python can import pigpio..."
+if ! python3 -c "import pigpio" >/dev/null 2>&1; then
+  echo "-> pigpio import failed; installing pigpio.py into dist-packages"
+  # pigpio.py is in the repo root after clone
+  PY_SITE="$(python3 -c 'import sysconfig; print(sysconfig.get_paths()[\"purelib\"])')"
+  sudo install -m 0644 pigpio.py "${PY_SITE}/pigpio.py"
+fi
+
 # -------------------------
-# Create/enable pigpiod systemd service (minimal + reliable)
-# Source: https://github.com/joan2937/pigpio/issues/632#issuecomment-3379034242
+# Create/enable pigpiod systemd service
 # -------------------------
-echo "[4/6] Installing and enabling pigpiod systemd service..."
+echo "[5/6] Installing and enabling pigpiod systemd service..."
 sudo tee /etc/systemd/system/pigpiod.service >/dev/null <<'EOF'
 [Unit]
 Description=Pigpio daemon
@@ -78,30 +91,19 @@ sudo systemctl enable pigpiod
 sudo systemctl restart pigpiod
 
 # -------------------------
-# Pip tooling
-# -------------------------
-echo "[5/6] Upgrading pip tooling..."
-sudo python3 -m pip install --upgrade pip setuptools wheel
-
-# -------------------------
-# Python dependencies
-# -------------------------
-echo "[6/6] Installing Python requirements..."
-sudo python3 -m pip install -r "${REQ_FILE}"
-
-# -------------------------
 # Sanity checks
 # -------------------------
-echo "=== Sanity checks ==="
+echo "[6/6] Sanity checks..."
 echo "pigpiod status:"
 systemctl --no-pager status pigpiod | head -n 12 || true
 
-echo "Python pigpio import test:"
 python3 - <<'EOF'
 import pigpio
 pi = pigpio.pi()
-print("Connected:", bool(pi.connected))
+print("pigpio module import: OK")
+print("pigpiod connected:", bool(pi.connected))
 pi.stop()
 EOF
 
 echo "=== Setup complete ==="
+echo "Reminder: Python deps are OS-managed via apt on trixie. No pip installs were performed."
