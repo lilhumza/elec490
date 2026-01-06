@@ -1,0 +1,4 @@
+# GPIO / PWM control
+pigpio
+# Optional but useful for local testing / tooling
+requests
