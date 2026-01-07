@@ -1,5 +1,4 @@
 #!/usr/bin/env python3
-import time
 import signal
 from http.server import BaseHTTPRequestHandler, HTTPServer
 
@@ -8,60 +7,130 @@ import pigpio
 HOST = "0.0.0.0"
 PORT = 8080
 
-# Front-left motor pins (BCM)
-FL_IN1 = 5
-FL_IN2 = 6
-FL_PWM = 12
-
 PWM_HZ = 2000
-DEADBAND = 6          # percent (0..100). Anything smaller becomes stop.
-MAX_PCT = 100
+DEADBAND_PCT = 6   # abs(value) < 6 => stop
+
 MIN_PCT = -100
+MAX_PCT = 100
+
+MOTORS = {
+    "FL": {"in1": 5,  "in2": 6,  "pwm": 12, "invert": False},
+    "FR": {"in1": 13, "in2": 19, "pwm": 18, "invert": False},
+    "RL": {"in1": 16, "in2": 20, "pwm": 21, "invert": False},
+    "RR": {"in1": 23, "in2": 24, "pwm": 25, "invert": False},
+}
 
 pi = pigpio.pi()
 if not pi.connected:
-    raise RuntimeError("pigpio not connected. Is pigpiod running? (sudo systemctl start pigpiod)")
+    raise RuntimeError("pigpio not connected. Start pigpiod: sudo systemctl start pigpiod")
 
 # init pins
-for pin in (FL_IN1, FL_IN2, FL_PWM):
-    pi.set_mode(pin, pigpio.OUTPUT)
+for cfg in MOTORS.values():
+    for pin in (cfg["in1"], cfg["in2"], cfg["pwm"]):
+        pi.set_mode(pin, pigpio.OUTPUT)
+    pi.set_PWM_frequency(cfg["pwm"], PWM_HZ)
 
-pi.set_PWM_frequency(FL_PWM, PWM_HZ)
+# last commanded values (int percent)
+state = {name: 0 for name in MOTORS.keys()}
 
-# keep last commanded value for debugging
-state = {"FL": 0}
+def _stop_cfg(cfg):
+    pi.write(cfg["in1"], 0)
+    pi.write(cfg["in2"], 0)
+    pi.set_PWM_dutycycle(cfg["pwm"], 0)
 
-def stop_fl():
-    pi.write(FL_IN1, 0)
-    pi.write(FL_IN2, 0)
-    pi.set_PWM_dutycycle(FL_PWM, 0)
-    state["FL"] = 0
+def stop_all():
+    for name, cfg in MOTORS.items():
+        _stop_cfg(cfg)
+        state[name] = 0
 
-def set_fl_pct(pct: int):
-    """
-    pct: integer in [-100..100]
-    """
+def set_motor_pct(name: str, pct: int):
+    if name not in MOTORS:
+        raise ValueError(f"NAME unknown motor {name}")
+
     if not isinstance(pct, int):
-        raise ValueError("TYPE speed must be int")
-    if pct < MIN_PCT or pct > MAX_PCT:
-        raise ValueError("RANGE speed must be between -100 and 100")
+        raise ValueError(f"TYPE {name} must be int")
 
-    # deadband
-    if abs(pct) < DEADBAND or pct == 0:
-        stop_fl()
+    if pct < MIN_PCT or pct > MAX_PCT:
+        raise ValueError(f"RANGE {name} must be between -100 and 100")
+
+    cfg = MOTORS[name]
+    if cfg.get("invert", False):
+        pct = -pct
+
+    if pct == 0 or abs(pct) < DEADBAND_PCT:
+        _stop_cfg(cfg)
+        state[name] = 0
         return
 
-    # direction
+    # Direction pins
     if pct > 0:
-        pi.write(FL_IN1, 1)
-        pi.write(FL_IN2, 0)
+        pi.write(cfg["in1"], 1)
+        pi.write(cfg["in2"], 0)
     else:
-        pi.write(FL_IN1, 0)
-        pi.write(FL_IN2, 1)
+        pi.write(cfg["in1"], 0)
+        pi.write(cfg["in2"], 1)
 
     duty = int((abs(pct) / 100.0) * 255)
-    pi.set_PWM_dutycycle(FL_PWM, duty)
-    state["FL"] = pct
+    pi.set_PWM_dutycycle(cfg["pwm"], duty)
+    state[name] = pct
+
+def parse_cmd_line(line: str):
+    """
+    Strict language:
+      V1 SET FL=10 FR=-20   (partial updates allowed)
+      V1 STOP
+      V1 GET
+    """
+    line = line.strip()
+    if not line:
+        raise ValueError("SYNTAX empty command")
+
+    parts = line.split()
+    if len(parts) < 2 or parts[0] != "V1":
+        raise ValueError("SYNTAX expected 'V1 <VERB>'")
+
+    verb = parts[1]
+
+    if verb == "STOP":
+        if len(parts) != 2:
+            raise ValueError("SYNTAX STOP takes no args")
+        return ("STOP", {})
+
+    if verb == "GET":
+        if len(parts) != 2:
+            raise ValueError("SYNTAX GET takes no args")
+        return ("GET", {})
+
+    if verb == "SET":
+        if len(parts) < 3:
+            raise ValueError("SYNTAX SET requires at least one assignment")
+
+        updates = {}
+        for token in parts[2:]:
+            if "=" not in token:
+                raise ValueError(f"SYNTAX bad assignment '{token}' (expected NAME=VALUE)")
+            name, val = token.split("=", 1)
+            name = name.strip()
+            val = val.strip()
+
+            if name in updates:
+                raise ValueError(f"SYNTAX duplicate assignment for {name}")
+            if name not in MOTORS:
+                raise ValueError(f"NAME unknown motor {name}")
+
+            try:
+                pct = int(val)
+            except:
+                raise ValueError(f"TYPE {name} must be int")
+
+            if pct < MIN_PCT or pct > MAX_PCT:
+                raise ValueError(f"RANGE {name} must be between -100 and 100")
+
+            updates[name] = pct
+
+        return ("SET", updates)
+
+    raise ValueError(f"SYNTAX unknown verb {verb}")
 
 class Handler(BaseHTTPRequestHandler):
     def _send_text(self, code: int, text: str):
@@ -76,7 +145,8 @@ class Handler(BaseHTTPRequestHandler):
         if self.path == "/health":
             return self._send_text(200, "OK V1 HEALTH")
         if self.path == "/state":
-            return self._send_text(200, f"OK V1 FL={state['FL']}")
+            s = " ".join([f"{k}={state[k]}" for k in ("FL", "FR", "RL", "RR")])
+            return self._send_text(200, f"OK V1 {s}")
         return self._send_text(404, "ERR V1 NOTFOUND")
 
     def do_POST(self):
@@ -86,51 +156,27 @@ class Handler(BaseHTTPRequestHandler):
         length = int(self.headers.get("Content-Length", "0"))
         raw = self.rfile.read(length).decode("utf-8", errors="strict").strip()
 
-        # Strict command language:
-        #   V1 SET FL=<int -100..100>
-        #   V1 STOP
-        #   V1 GET
         try:
-            parts = raw.split()
-            if len(parts) < 2 or parts[0] != "V1":
-                return self._send_text(400, "ERR V1 SYNTAX expected 'V1 <VERB>'")
+            verb, updates = parse_cmd_line(raw)
 
-            verb = parts[1]
-
+            # Atomic behavior: parse validates all updates before applying.
             if verb == "STOP":
-                if len(parts) != 2:
-                    return self._send_text(400, "ERR V1 SYNTAX STOP takes no args")
-                stop_fl()
+                stop_all()
                 return self._send_text(200, "OK V1")
 
             if verb == "GET":
-                if len(parts) != 2:
-                    return self._send_text(400, "ERR V1 SYNTAX GET takes no args")
-                return self._send_text(200, f"OK V1 FL={state['FL']}")
+                s = " ".join([f"{k}={state[k]}" for k in ("FL", "FR", "RL", "RR")])
+                return self._send_text(200, f"OK V1 {s}")
 
             if verb == "SET":
-                if len(parts) != 3:
-                    return self._send_text(400, "ERR V1 SYNTAX SET requires exactly one assignment: FL=<val>")
-
-                tok = parts[2]
-                if not tok.startswith("FL="):
-                    return self._send_text(400, "ERR V1 SYNTAX only FL=<val> supported in this build")
-
-                val_s = tok.split("=", 1)[1]
-                try:
-                    pct = int(val_s)
-                except:
-                    return self._send_text(400, "ERR V1 TYPE FL must be int")
-
-                set_fl_pct(pct)
+                for name, pct in updates.items():
+                    set_motor_pct(name, pct)
                 return self._send_text(200, "OK V1")
 
-            return self._send_text(400, f"ERR V1 SYNTAX unknown verb {verb}")
+            return self._send_text(400, "ERR V1 SYNTAX")
 
         except ValueError as e:
-            # our set_fl_pct throws ValueError("CODE message")
-            msg = str(e)
-            return self._send_text(400, f"ERR V1 {msg}")
+            return self._send_text(400, f"ERR V1 {str(e)}")
         except Exception as e:
             return self._send_text(500, f"ERR V1 INTERNAL {e}")
 
@@ -138,7 +184,7 @@ class Handler(BaseHTTPRequestHandler):
         return
 
 def shutdown(*_):
-    stop_fl()
+    stop_all()
     pi.stop()
     raise SystemExit(0)
 
@@ -146,10 +192,10 @@ def main():
     signal.signal(signal.SIGINT, shutdown)
     signal.signal(signal.SIGTERM, shutdown)
 
-    stop_fl()
+    stop_all()
     server = HTTPServer((HOST, PORT), Handler)
-    print(f"FL motor server listening on http://{HOST}:{PORT}")
-    print("POST /cmd with: 'V1 SET FL=<int -100..100>' or 'V1 STOP' or 'V1 GET'")
+    print(f"4-pump server listening on http://{HOST}:{PORT}")
+    print("POST /cmd with: 'V1 SET FL=.. FR=.. RL=.. RR=..' (partial ok), 'V1 STOP', 'V1 GET'")
     server.serve_forever()
 
 if __name__ == "__main__":
