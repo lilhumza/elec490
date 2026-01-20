@@ -2,10 +2,12 @@
 import signal
 from http.server import BaseHTTPRequestHandler, HTTPServer
 
-import pigpio
+import lgpio
 
 HOST = "0.0.0.0"
 PORT = 8080
+
+GPIOCHIP = 0  # if you ever need to change chips on Pi 5, start here
 
 PWM_HZ = 2000
 DEADBAND_PCT = 6   # abs(value) < 6 => stop
@@ -20,23 +22,23 @@ MOTORS = {
     "RR": {"in1": 23, "in2": 24, "pwm": 25, "invert": False},
 }
 
-pi = pigpio.pi()
-if not pi.connected:
-    raise RuntimeError("pigpio not connected. Start pigpiod: sudo systemctl start pigpiod")
+# open gpiochip
+h = lgpio.gpiochip_open(GPIOCHIP)
 
-# init pins
+# init pins: claim outputs
 for cfg in MOTORS.values():
-    for pin in (cfg["in1"], cfg["in2"], cfg["pwm"]):
-        pi.set_mode(pin, pigpio.OUTPUT)
-    pi.set_PWM_frequency(cfg["pwm"], PWM_HZ)
+    lgpio.gpio_claim_output(h, cfg["in1"])
+    lgpio.gpio_claim_output(h, cfg["in2"])
+    lgpio.gpio_claim_output(h, cfg["pwm"])
 
 # last commanded values (int percent)
 state = {name: 0 for name in MOTORS.keys()}
 
 def _stop_cfg(cfg):
-    pi.write(cfg["in1"], 0)
-    pi.write(cfg["in2"], 0)
-    pi.set_PWM_dutycycle(cfg["pwm"], 0)
+    lgpio.gpio_write(h, cfg["in1"], 0)
+    lgpio.gpio_write(h, cfg["in2"], 0)
+    # stop PWM: duty=0
+    lgpio.tx_pwm(h, cfg["pwm"], PWM_HZ, 0)
 
 def stop_all():
     for name, cfg in MOTORS.items():
@@ -64,14 +66,16 @@ def set_motor_pct(name: str, pct: int):
 
     # Direction pins
     if pct > 0:
-        pi.write(cfg["in1"], 1)
-        pi.write(cfg["in2"], 0)
+        lgpio.gpio_write(h, cfg["in1"], 1)
+        lgpio.gpio_write(h, cfg["in2"], 0)
     else:
-        pi.write(cfg["in1"], 0)
-        pi.write(cfg["in2"], 1)
+        lgpio.gpio_write(h, cfg["in1"], 0)
+        lgpio.gpio_write(h, cfg["in2"], 1)
 
-    duty = int((abs(pct) / 100.0) * 255)
-    pi.set_PWM_dutycycle(cfg["pwm"], duty)
+    # lgpio PWM duty is percent (0..100)
+    duty_pct = int(abs(pct))
+    lgpio.tx_pwm(h, cfg["pwm"], PWM_HZ, duty_pct)
+
     state[name] = pct
 
 def parse_cmd_line(line: str):
@@ -159,7 +163,6 @@ class Handler(BaseHTTPRequestHandler):
         try:
             verb, updates = parse_cmd_line(raw)
 
-            # Atomic behavior: parse validates all updates before applying.
             if verb == "STOP":
                 stop_all()
                 return self._send_text(200, "OK V1")
@@ -185,7 +188,7 @@ class Handler(BaseHTTPRequestHandler):
 
 def shutdown(*_):
     stop_all()
-    pi.stop()
+    lgpio.gpiochip_close(h)
     raise SystemExit(0)
 
 def main():
@@ -194,7 +197,7 @@ def main():
 
     stop_all()
     server = HTTPServer((HOST, PORT), Handler)
-    print(f"4-pump server listening on http://{HOST}:{PORT}")
+    print(f"4-pump server (lgpio) listening on http://{HOST}:{PORT}")
     print("POST /cmd with: 'V1 SET FL=.. FR=.. RL=.. RR=..' (partial ok), 'V1 STOP', 'V1 GET'")
     server.serve_forever()
 

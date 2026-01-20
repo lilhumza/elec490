@@ -10,7 +10,7 @@ curl -X POST http://localhost:8080/cmd \
 
 curl -X POST http://localhost:8080/cmd \
   -H "Content-Type: text/plain" \
-  --data 'V1 SET FL=-40'
+  --data 'V1 SET FR=-60'
 
 curl -X POST http://localhost:8080/cmd \
   -H "Content-Type: text/plain" \
