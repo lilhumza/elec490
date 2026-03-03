@@ -1,0 +1,814 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Arduino Real-Time Dashboard</title>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <style>
+        :root {
+            --color-bg-primary: rgba(252, 252, 249, 1);
+            --color-text-primary: rgba(19, 52, 59, 1);
+            --color-primary: rgba(33, 128, 141, 1);
+            --color-primary-hover: rgba(29, 116, 128, 1);
+            --color-border: rgba(94, 82, 64, 0.2);
+            --color-surface: rgba(255, 255, 253, 1);
+            --color-error: rgba(192, 21, 47, 1);
+            --color-success: rgba(33, 128, 141, 1);
+        }
+
+        @media (prefers-color-scheme: dark) {
+            :root {
+                --color-bg-primary: rgba(31, 33, 33, 1);
+                --color-text-primary: rgba(245, 245, 245, 1);
+                --color-primary: rgba(50, 184, 198, 1);
+                --color-primary-hover: rgba(45, 166, 178, 1);
+                --color-border: rgba(119, 124, 124, 0.3);
+                --color-surface: rgba(38, 40, 40, 1);
+            }
+        }
+
+        * {
+            box-sizing: border-box;
+        }
+
+        body {
+            margin: 0;
+            padding: 0;
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+            background-color: var(--color-bg-primary);
+            color: var(--color-text-primary);
+        }
+
+        .container {
+            max-width: 1400px;
+            margin: 0 auto;
+            padding: 20px;
+        }
+
+        header {
+            margin-bottom: 30px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            flex-wrap: wrap;
+            gap: 20px;
+        }
+
+        h1 {
+            margin: 0;
+            font-size: 28px;
+            font-weight: 600;
+        }
+
+        .subtitle {
+            color: var(--color-text-primary);
+            opacity: 0.7;
+            margin: 0;
+        }
+
+        .connection-status {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            padding: 8px 16px;
+            border-radius: 20px;
+            background: rgba(33, 128, 141, 0.15);
+            font-size: 13px;
+            font-weight: 500;
+        }
+
+        .status-indicator {
+            width: 10px;
+            height: 10px;
+            border-radius: 50%;
+            background: var(--color-error);
+            animation: pulse 2s infinite;
+        }
+
+        .status-indicator.connected {
+            background: var(--color-success);
+            animation: none;
+        }
+
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.5; }
+        }
+
+        .controls {
+            background: var(--color-surface);
+            border: 1px solid var(--color-border);
+            border-radius: 8px;
+            padding: 20px;
+            margin-bottom: 30px;
+        }
+
+        .control-group {
+            display: flex;
+            gap: 12px;
+            margin-bottom: 16px;
+            flex-wrap: wrap;
+            align-items: flex-end;
+        }
+
+        .form-group {
+            display: flex;
+            flex-direction: column;
+            gap: 6px;
+            flex: 1;
+            min-width: 200px;
+        }
+
+        label {
+            font-size: 14px;
+            font-weight: 500;
+        }
+
+        textarea, input, select {
+            padding: 10px;
+            border: 1px solid var(--color-border);
+            border-radius: 6px;
+            font-family: inherit;
+            font-size: 14px;
+            background-color: var(--color-bg-primary);
+            color: var(--color-text-primary);
+        }
+
+        textarea {
+            resize: vertical;
+            font-family: 'Courier New', monospace;
+            min-height: 80px;
+        }
+
+        textarea:focus, input:focus, select:focus {
+            outline: none;
+            border-color: var(--color-primary);
+            box-shadow: 0 0 0 3px rgba(33, 128, 141, 0.1);
+        }
+
+        .button {
+            padding: 10px 20px;
+            border: none;
+            border-radius: 6px;
+            font-size: 14px;
+            font-weight: 500;
+            cursor: pointer;
+            transition: all 200ms ease;
+        }
+
+        .btn-primary {
+            background-color: var(--color-primary);
+            color: rgba(252, 252, 249, 1);
+        }
+
+        .btn-primary:hover {
+            background-color: var(--color-primary-hover);
+        }
+
+        .btn-secondary {
+            background-color: var(--color-border);
+            color: var(--color-text-primary);
+        }
+
+        .btn-secondary:hover {
+            background-color: rgba(94, 82, 64, 0.3);
+        }
+
+        .btn-export {
+            background-color: rgba(33, 128, 141, 0.2);
+            color: var(--color-primary);
+        }
+
+        .btn-export:hover {
+            background-color: rgba(33, 128, 141, 0.3);
+        }
+
+        .status {
+            font-size: 13px;
+            padding: 8px 12px;
+            border-radius: 4px;
+            margin-left: auto;
+        }
+
+        .status.ready {
+            background-color: rgba(33, 128, 141, 0.15);
+            color: var(--color-success);
+        }
+
+        .stats {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 15px;
+            margin-bottom: 30px;
+        }
+
+        .stat-card {
+            background: var(--color-surface);
+            border: 1px solid var(--color-border);
+            border-radius: 8px;
+            padding: 16px;
+        }
+
+        .stat-label {
+            font-size: 12px;
+            font-weight: 600;
+            color: var(--color-text-primary);
+            opacity: 0.7;
+            margin-bottom: 8px;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+
+        .stat-value {
+            font-size: 20px;
+            font-weight: 600;
+            color: var(--color-primary);
+        }
+
+        .charts {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(350px, 1fr));
+            gap: 20px;
+        }
+
+        .chart-container {
+            background: var(--color-surface);
+            border: 1px solid var(--color-border);
+            border-radius: 8px;
+            padding: 20px;
+            position: relative;
+        }
+
+        .chart-title {
+            font-size: 16px;
+            font-weight: 600;
+            margin-bottom: 16px;
+            padding-bottom: 12px;
+            border-bottom: 1px solid var(--color-border);
+        }
+
+        .chart-wrapper {
+            position: relative;
+            gap: 20px;
+        }
+
+        .info-box {
+            background-color: rgba(33, 128, 141, 0.1);
+            border-left: 4px solid var(--color-primary);
+            padding: 12px 16px;
+            border-radius: 4px;
+            margin-bottom: 16px;
+            font-size: 13px;
+        }
+
+        .data-count {
+            font-size: 12px;
+            color: var(--color-text-primary);
+            opacity: 0.6;
+            margin-top: 12px;
+            text-align: right;
+        }
+
+        .live-indicator {
+            display: inline-block;
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            background: var(--color-error);
+            margin-right: 6px;
+            animation: pulse 1s infinite;
+        }
+
+        .live-indicator.active {
+            background: var(--color-success);
+        }
+
+        @media (max-width: 768px) {
+            .control-group {
+                flex-direction: column;
+                align-items: stretch;
+            }
+
+            .form-group {
+                min-width: unset;
+            }
+
+            .status {
+                margin-left: 0;
+                margin-top: 10px;
+            }
+
+            .charts {
+                grid-template-columns: 1fr;
+            }
+
+            header {
+                flex-direction: column;
+                align-items: flex-start;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <header>
+            <div>
+                <h1>🔬 Subersible ROV Dashboard</h1>
+                <p class="subtitle">Temperature and PH Sensor Data</p>
+            </div>
+            <div class="connection-status" id="connectionStatus">
+                <span class="status-indicator" id="statusIndicator"></span>
+                <span id="statusText">Connecting...</span>
+            </div>
+        </header>
+
+        <div class="controls">
+            <div class="info-box">
+                💡 <strong>Live Mode:</strong> Data streaming from Arduino via WebSocket (port 3001). Charts display last 30 data points. <span class="live-indicator active"></span>
+            </div>
+
+            <div class="control-group">
+                <button class="button btn-secondary" onclick="clearData()">🗑️ Clear Data</button>
+                <button class="button btn-export" onclick="exportToCSV()">💾 Export CSV</button>
+                <span class="status ready" id="status">Ready</span>
+            </div>
+        </div>
+
+        <div class="stats">
+            <div class="stat-card">
+                <div class="stat-label">Data Points (Chart)</div>
+                <div class="stat-value" id="dataCount">0</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-label">Temperature Range</div>
+                <div class="stat-value" id="tempRange">—</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-label">pH Range</div>
+                <div class="stat-value" id="phRange">—</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-label">Voltage Range</div>
+                <div class="stat-value" id="voltageRange">—</div>
+            </div>
+        </div>
+
+        <!-- <div class="cameraBox">
+            <div class="chart-container">
+                <div class="chart-title">Live Camera Feed</div>
+                <div class="chart-wrapper">
+                    <video id="cameraFeed" autoplay playsinline style="width:100%; height:100%; object-fit:cover; border-radius:6px; background:#000;"></video>
+                </div>
+            </div>
+        </div> -->
+
+        <div class="cameraBox">
+            <div class="chart-container">
+                <div class="chart-title">Live Camera Feed</div>
+                <div class="chart-wrapper">
+                    <!-- Replace video with img for MJPG stream -->
+                    <img id="cameraFeed" 
+                        src="http://192.168.2.38:5050/?action=stream" 
+                        autoplay 
+                        style="width:100%; height:100%; object-fit:cover; border-radius:6px; background:#000;" />
+                </div>
+            </div>
+        </div>
+
+
+        <div class="charts">
+
+            <div class="chart-container">
+                <div class="chart-title">Temperature (°C)</div>
+                <div class="chart-wrapper">
+                    <canvas id="tempChart"></canvas>
+                </div>
+                <div class="data-count" id="tempDataCount"></div>
+            </div>
+
+            <div class="chart-container">
+                <div class="chart-title">pH Level</div>
+                <div class="chart-wrapper">
+                    <canvas id="phChart"></canvas>
+                </div>
+                <div class="data-count" id="phDataCount"></div>
+            </div>
+
+            <div class="chart-container" style="display:none">
+                <div class="chart-title">Voltage (V)</div>
+                <div class="chart-wrapper">
+                    <canvas id="voltageChart"></canvas>
+                </div>
+                <div class="data-count" id="voltageDataCount"></div>
+            </div>
+
+            <div class="chart-container">
+                <div class="chart-title">Time Series Overview</div>
+                <div class="chart-wrapper">
+                    <canvas id="allChart"></canvas>
+                </div>
+                <div class="data-count" id="allDataCount"></div>
+            </div>
+
+            
+
+        </div>
+    </div>
+
+    <script>
+        // ====================================================================
+        // Global Variables
+        // ====================================================================
+
+        let charts = {};
+        let dataPoints = [];
+        let ws = null;
+        let maxDataPoints = 30; // ← CHANGED: Limit to 30 data points max
+
+        // ====================================================================
+        // WebSocket Connection Management
+        // ====================================================================
+
+        function initWebSocket() {
+            const wsUrl = `ws://${window.location.hostname}:3001`;
+            console.log(`🔌 Attempting WebSocket connection to ${wsUrl}...`);
+
+            ws = new WebSocket(wsUrl);
+
+            ws.onopen = () => {
+                console.log('✅ WebSocket connected');
+                updateConnectionStatus(true);
+                document.getElementById('status').textContent = '🟢 Live streaming active';
+                document.getElementById('status').style.color = 'var(--color-success)';
+            };
+
+            ws.onmessage = (event) => {
+                try {
+                    const message = JSON.parse(event.data);
+                    handleWebSocketMessage(message);
+                } catch (err) {
+                    console.error('❌ Error parsing WebSocket message:', err);
+                }
+            };
+
+            ws.onerror = (error) => {
+                console.error('❌ WebSocket error:', error);
+                updateConnectionStatus(false);
+                document.getElementById('status').textContent = '❌ WebSocket error';
+                document.getElementById('status').style.color = 'var(--color-error)';
+            };
+
+            ws.onclose = () => {
+                console.log('⚠️  WebSocket disconnected');
+                updateConnectionStatus(false);
+                document.getElementById('status').textContent = '⚠️  Disconnected';
+                document.getElementById('status').style.color = 'var(--color-error)';
+
+                // Attempt to reconnect after 3 seconds
+                console.log('🔄 Attempting to reconnect in 3 seconds...');
+                setTimeout(initWebSocket, 3000);
+            };
+        }
+
+        function updateConnectionStatus(connected) {
+            const indicator = document.getElementById('statusIndicator');
+            const statusText = document.getElementById('statusText');
+
+            if (connected) {
+                indicator.classList.add('connected');
+                statusText.textContent = '🟢 Connected (Live)';
+            } else {
+                indicator.classList.remove('connected');
+                statusText.textContent = '🔴 Disconnected';
+            }
+        }
+
+        function handleWebSocketMessage(message) {
+            switch (message.type) {
+                case 'sensor_data':
+                    addDataPoint(message.payload);
+                    break;
+
+                case 'connection':
+                    console.log('💬 Server message:', message.message);
+                    break;
+
+                case 'serial_connected':
+                    console.log('📡 Arduino connected');
+                    break;
+
+                case 'serial_disconnected':
+                    console.log('⚠️  Arduino disconnected');
+                    alert('Arduino serial connection lost!');
+                    break;
+
+                case 'serial_error':
+                    console.error('❌ Arduino error:', message.message);
+                    alert('Arduino error: ' + message.message);
+                    break;
+
+                default:
+                    console.log('Unknown message type:', message.type);
+            }
+        }
+
+        function addDataPoint(data) {
+            dataPoints.push(data);
+
+            // Keep only last 30 data points
+            if (dataPoints.length > maxDataPoints) {
+                dataPoints.shift();
+            }
+
+            // Update all charts with new data
+            updateCharts();
+            updateStats();
+        }
+
+        // ====================================================================
+        // Chart Configuration
+        // ====================================================================
+
+        const chartConfig = {
+            responsive: true,
+            maintainAspectRatio: false,
+            plugins: {
+                legend: {
+                    display: true,
+                    position: 'top'
+                }
+            },
+            scales: {
+                x: {
+                    type: 'linear',
+                    title: {
+                        display: true,
+                        text: 'Time (ms)'
+                    }
+                }
+            }
+        };
+
+        function initCharts() {
+            const colors = {
+                temperature: 'rgb(255, 108, 0)',
+                ph: 'rgb(76, 175, 80)',
+                voltage: 'rgb(76, 144, 226)',
+            };
+
+            // Temperature Chart
+            charts.tempChart = new Chart(document.getElementById('tempChart'), {
+                type: 'line',
+                data: {
+                    labels: [],
+                    datasets: [{
+                        label: 'Temperature (°C)',
+                        data: [],
+                        borderColor: colors.temperature,
+                        backgroundColor: 'rgba(255, 108, 0, 0.1)',
+                        borderWidth: 2,
+                        fill: true,
+                        tension: 0.4,
+                        pointRadius: 2,
+                        pointHoverRadius: 4
+                    }]
+                },
+                options: chartConfig
+            });
+
+            // pH Chart
+            charts.phChart = new Chart(document.getElementById('phChart'), {
+                type: 'line',
+                data: {
+                    labels: [],
+                    datasets: [{
+                        label: 'pH Level',
+                        data: [],
+                        borderColor: colors.ph,
+                        backgroundColor: 'rgba(76, 175, 80, 0.1)',
+                        borderWidth: 2,
+                        fill: true,
+                        tension: 0.4,
+                        pointRadius: 2,
+                        pointHoverRadius: 4
+                    }]
+                },
+                options: chartConfig
+            });
+
+            // Voltage Chart
+            charts.voltageChart = new Chart(document.getElementById('voltageChart'), {
+                type: 'line',
+                data: {
+                    labels: [],
+                    datasets: [{
+                        label: 'Voltage (V)',
+                        data: [],
+                        borderColor: colors.voltage,
+                        backgroundColor: 'rgba(76, 144, 226, 0.1)',
+                        borderWidth: 2,
+                        fill: true,
+                        tension: 0.4,
+                        pointRadius: 2,
+                        pointHoverRadius: 4
+                    }]
+                },
+                options: chartConfig
+            });
+
+            // All Data Chart
+            charts.allChart = new Chart(document.getElementById('allChart'), {
+                type: 'line',
+                data: {
+                    labels: [],
+                    datasets: [
+                        {
+                            label: 'Temperature (°C)',
+                            data: [],
+                            borderColor: colors.temperature,
+                            backgroundColor: 'rgba(255, 108, 0, 0.05)',
+                            borderWidth: 2,
+                            tension: 0.4,
+                            yAxisID: 'y',
+                            pointRadius: 1
+                        },
+                        {
+                            label: 'pH Level',
+                            data: [],
+                            borderColor: colors.ph,
+                            backgroundColor: 'rgba(76, 175, 80, 0.05)',
+                            borderWidth: 2,
+                            tension: 0.4,
+                            yAxisID: 'y1',
+                            pointRadius: 1
+                        },
+                        {
+                            label: 'Voltage (V)',
+                            data: [],
+                            borderColor: colors.voltage,
+                            backgroundColor: 'rgba(76, 144, 226, 0.05)',
+                            borderWidth: 2,
+                            tension: 0.4,
+                            yAxisID: 'y2',
+                            pointRadius: 1
+                        }
+                    ]
+                },
+                options: {
+                    ...chartConfig,
+                    scales: {
+                        x: {
+                            type: 'linear',
+                            title: {
+                                display: true,
+                                text: 'Time (ms)'
+                            }
+                        },
+                        y: {
+                            type: 'linear',
+                            display: true,
+                            position: 'left',
+                            title: {
+                                display: true,
+                                text: 'Temperature (°C)'
+                            }
+                        },
+                        y1: {
+                            type: 'linear',
+                            display: true,
+                            position: 'center',
+                            title: {
+                                display: true,
+                                text: 'pH Level'
+                            }
+                        },
+                        y2: {
+                            type: 'linear',
+                            display: true,
+                            position: 'right',
+                            title: {
+                                display: true,
+                                text: 'Voltage (V)'
+                            }
+                        }
+                    }
+                }
+            });
+        }
+
+        function updateCharts() {
+            if (dataPoints.length === 0) return;
+
+            // Sort by time
+            const sortedData = [...dataPoints].sort((a, b) => a.time - b.time);
+
+            const times = sortedData.map(p => p.time);
+            const temps = sortedData.map(p => p.temperature);
+            const phs = sortedData.map(p => p.ph);
+            const voltages = sortedData.map(p => p.voltage);
+
+            // Update individual charts
+            charts.tempChart.data.labels = times;
+            charts.tempChart.data.datasets[0].data = temps;
+            charts.tempChart.update('none');
+            document.getElementById('tempDataCount').textContent = `${temps.length} points`;
+
+            charts.phChart.data.labels = times;
+            charts.phChart.data.datasets[0].data = phs;
+            charts.phChart.update('none');
+            document.getElementById('phDataCount').textContent = `${phs.length} points`;
+
+            charts.voltageChart.data.labels = times;
+            charts.voltageChart.data.datasets[0].data = voltages;
+            charts.voltageChart.update('none');
+            document.getElementById('voltageDataCount').textContent = `${voltages.length} points`;
+
+            // Update all chart
+            charts.allChart.data.labels = times;
+            charts.allChart.data.datasets[0].data = temps;
+            charts.allChart.data.datasets[1].data = phs;
+            charts.allChart.data.datasets[2].data = voltages;
+            charts.allChart.update('none');
+            document.getElementById('allDataCount').textContent = `${temps.length} points`;
+        }
+
+        function updateStats() {
+            if (dataPoints.length === 0) return;
+
+            const temps = dataPoints.map(p => p.temperature);
+            const phs = dataPoints.map(p => p.ph);
+            const voltages = dataPoints.map(p => p.voltage);
+
+            document.getElementById('dataCount').textContent = dataPoints.length;
+            document.getElementById('tempRange').textContent = `${Math.min(...temps).toFixed(2)} - ${Math.max(...temps).toFixed(2)}°C`;
+            document.getElementById('phRange').textContent = `${Math.min(...phs).toFixed(2)} - ${Math.max(...phs).toFixed(2)}`;
+            document.getElementById('voltageRange').textContent = `${Math.min(...voltages).toFixed(2)} - ${Math.max(...voltages).toFixed(2)}V`;
+        }
+
+        function clearData() {
+            dataPoints = [];
+            document.getElementById('dataCount').textContent = '0';
+            document.getElementById('tempRange').textContent = '—';
+            document.getElementById('phRange').textContent = '—';
+            document.getElementById('voltageRange').textContent = '—';
+
+            // Reset charts
+            Object.values(charts).forEach(chart => {
+                chart.data.labels = [];
+                chart.data.datasets.forEach(dataset => dataset.data = []);
+                chart.update();
+            });
+        }
+
+        function exportToCSV() {
+            if (dataPoints.length === 0) {
+                alert('No data to export');
+                return;
+            }
+
+            let csv = 'Time (ms),Temperature (°C),pH,Voltage (V)\n';
+            dataPoints.forEach(p => {
+                csv += `${p.time},${p.temperature},${p.ph},${p.voltage}\n`;
+            });
+
+            const blob = new Blob([csv], { type: 'text/csv' });
+            const url = window.URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = `arduino_data_${new Date().getTime()}.csv`;
+            a.click();
+            window.URL.revokeObjectURL(url);
+        }
+
+        async function initCamera() {
+            const video = document.getElementById('cameraFeed');
+            if (!video) return;
+
+            try {
+                const stream = await navigator.mediaDevices.getUserMedia({
+                    video: { width: 1280, height: 720 },
+                    audio: false
+                });
+                video.srcObject = stream;
+                console.log('📷 Camera started');
+            } catch (err) {
+                console.error('❌ Error accessing camera:', err);
+                alert('Could not access camera. Check permissions and that no other app is using it.');
+            }
+        }
+
+
+        // ====================================================================
+        // Initialize on Page Load
+        // ====================================================================
+
+        window.addEventListener('load', () => {
+            console.log('📊 Initializing Arduino Dashboard...');
+            initCharts();
+            initWebSocket();
+            initCamera();
+        });
+    </script>
+</body>
+</html>

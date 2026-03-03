@@ -1,0 +1,3 @@
+mjpg_streamer -o "output_http.so -p 5050 -w /home/subrov/mjpg-streamer-experimental/www" -i "input_uvc.so -d /dev/video0 -r 1920x1080 -f 30"
+
+node server.js
