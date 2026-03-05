@@ -76,3 +76,14 @@ curl -X POST http://localhost:8080/cmd \
 curl -X POST http://localhost:8080/cmd \
   -H "Content-Type: text/plain" \
   --data 'V1 STOP'
+
+# -------------------------
+# 12V supply enable
+# -------------------------
+curl -X POST http://localhost:8080/cmd \
+  -H "Content-Type: text/plain" \
+  --data 'V1 PWR ON'
+
+curl -X POST http://localhost:8080/cmd \
+  -H "Content-Type: text/plain" \
+  --data 'V1 PWR OFF'
