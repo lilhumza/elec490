@@ -184,6 +184,57 @@
             background-color: rgba(33, 128, 141, 0.3);
         }
 
+        .rov-control-panel {
+            margin-top: 16px;
+            border: 1px solid var(--color-border);
+            border-radius: 8px;
+            padding: 14px;
+            background: var(--color-bg-primary);
+        }
+
+        .rov-hint {
+            font-size: 13px;
+            opacity: 0.8;
+            margin-bottom: 12px;
+        }
+
+        .rov-grid {
+            display: grid;
+            grid-template-columns: repeat(4, minmax(80px, 1fr));
+            gap: 10px;
+            align-items: stretch;
+        }
+
+        .rov-button {
+            padding: 12px 8px;
+            border: 1px solid var(--color-border);
+            border-radius: 8px;
+            background: var(--color-surface);
+            color: var(--color-text-primary);
+            font-size: 14px;
+            font-weight: 700;
+            cursor: pointer;
+            min-height: 56px;
+            user-select: none;
+        }
+
+        .rov-button.active {
+            border-color: var(--color-primary);
+            background: rgba(33, 128, 141, 0.2);
+            box-shadow: 0 0 0 2px rgba(33, 128, 141, 0.2);
+        }
+
+        .rov-stop {
+            grid-column: span 2;
+            background: rgba(192, 21, 47, 0.9);
+            color: #fff;
+            font-size: 16px;
+        }
+
+        .rov-stop:hover {
+            background: rgba(192, 21, 47, 1);
+        }
+
         .status {
             font-size: 13px;
             padding: 8px 12px;
@@ -303,6 +354,10 @@
                 grid-template-columns: 1fr;
             }
 
+            .rov-grid {
+                grid-template-columns: repeat(2, minmax(120px, 1fr));
+            }
+
             header {
                 flex-direction: column;
                 align-items: flex-start;
@@ -332,6 +387,21 @@
                 <button class="button btn-secondary" onclick="clearData()">🗑️ Clear Data</button>
                 <button class="button btn-export" onclick="exportToCSV()">💾 Export CSV</button>
                 <span class="status ready" id="status">Ready</span>
+            </div>
+
+            <div class="rov-control-panel">
+                <div class="rov-hint">
+                    ROV Controls: hold W/A/S/D for thrust, toggle Shift/Ctrl for ballast, Space or STOP to halt.
+                </div>
+                <div class="rov-grid">
+                    <button class="rov-button" id="btnW" data-key="w">W Forward</button>
+                    <button class="rov-button" id="btnA" data-key="a">A Left</button>
+                    <button class="rov-button" id="btnS" data-key="s">S Back</button>
+                    <button class="rov-button" id="btnD" data-key="d">D Right</button>
+                    <button class="rov-button" id="btnCtrl">Ctrl Sink</button>
+                    <button class="rov-button" id="btnShift">Shift Float</button>
+                    <button class="rov-button rov-stop" id="btnStop">STOP (Space)</button>
+                </div>
             </div>
         </div>
 
@@ -425,6 +495,10 @@
         let dataPoints = [];
         let ws = null;
         let maxDataPoints = 30; // ← CHANGED: Limit to 30 data points max
+        let activeMovementKeys = new Set();
+        let ballastMode = 'neutral'; // neutral | up | down
+        let lastThrusterSignature = '';
+        let inputInitialized = false;
 
         // ====================================================================
         // WebSocket Connection Management
@@ -524,6 +598,220 @@
             // Update all charts with new data
             updateCharts();
             updateStats();
+        }
+
+        // ====================================================================
+        // ROV Control (GUI + Keyboard)
+        // ====================================================================
+
+        function makeThrusters(fl = 0, fr = 0, rl = 0, rr = 0) {
+            return { FL: fl, FR: fr, RL: rl, RR: rr };
+        }
+
+        function computeThrustersFromInput() {
+            const w = activeMovementKeys.has('w');
+            const a = activeMovementKeys.has('a');
+            const s = activeMovementKeys.has('s');
+            const d = activeMovementKeys.has('d');
+            const activeCount = activeMovementKeys.size;
+
+            if (activeCount >= 3) {
+                return makeThrusters(100, 100, 100, 100);
+            }
+
+            if (a && d) {
+                return makeThrusters(100, 100, 100, 100);
+            }
+
+            if (w && s && !a && !d) {
+                return makeThrusters(100, 100, 100, 100);
+            }
+
+            if (!a && !d) {
+                if (w) return makeThrusters(0, 0, 100, 100);
+                if (s) return makeThrusters(100, 100, 0, 0);
+                return makeThrusters();
+            }
+
+            if (a) {
+                const out = makeThrusters(100, 0, 0, 100); // FL + RR
+                if (w && !s) out.RL = 65;
+                if (s && !w) out.FR = 65;
+                return out;
+            }
+
+            if (d) {
+                const out = makeThrusters(0, 100, 100, 0); // FR + RL
+                if (w && !s) out.RR = 65;
+                if (s && !w) out.FL = 65;
+                return out;
+            }
+
+            return makeThrusters();
+        }
+
+        async function postJson(url, payload) {
+            const response = await fetch(url, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(payload)
+            });
+
+            if (!response.ok) {
+                const text = await response.text();
+                throw new Error(text || `HTTP ${response.status}`);
+            }
+
+            return response.json();
+        }
+
+        async function pushThrusters(thrusters) {
+            const signature = `${thrusters.FL}|${thrusters.FR}|${thrusters.RL}|${thrusters.RR}`;
+            if (signature === lastThrusterSignature) return;
+
+            lastThrusterSignature = signature;
+            await postJson('/api/rov/thrusters', thrusters);
+        }
+
+        async function syncThrustersFromInputs() {
+            try {
+                const thrusters = computeThrustersFromInput();
+                await pushThrusters(thrusters);
+            } catch (err) {
+                console.error('Thruster command failed:', err);
+            }
+        }
+
+        function setMovementKeyActive(key, isActive) {
+            const hasKey = activeMovementKeys.has(key);
+            if (isActive && !hasKey) activeMovementKeys.add(key);
+            if (!isActive && hasKey) activeMovementKeys.delete(key);
+
+            const button = document.querySelector(`[data-key="${key}"]`);
+            if (button) {
+                button.classList.toggle('active', activeMovementKeys.has(key));
+            }
+
+            syncThrustersFromInputs();
+        }
+
+        function updateBallastHighlight() {
+            const ctrlButton = document.getElementById('btnCtrl');
+            const shiftButton = document.getElementById('btnShift');
+            if (!ctrlButton || !shiftButton) return;
+
+            ctrlButton.classList.toggle('active', ballastMode === 'down');
+            shiftButton.classList.toggle('active', ballastMode === 'up');
+        }
+
+        async function setBallast(targetMode) {
+            try {
+                await postJson('/api/rov/ballast', { state: targetMode });
+                ballastMode = targetMode;
+                updateBallastHighlight();
+            } catch (err) {
+                console.error('Ballast command failed:', err);
+            }
+        }
+
+        function toggleBallast(mode) {
+            const targetMode = ballastMode === mode ? 'neutral' : mode;
+            setBallast(targetMode);
+        }
+
+        async function hardStop() {
+            activeMovementKeys.clear();
+            ['w', 'a', 's', 'd'].forEach((k) => {
+                const button = document.querySelector(`[data-key="${k}"]`);
+                if (button) button.classList.remove('active');
+            });
+
+            lastThrusterSignature = '';
+
+            try {
+                await postJson('/api/rov/stop', {});
+                ballastMode = 'neutral';
+                updateBallastHighlight();
+            } catch (err) {
+                console.error('STOP command failed:', err);
+            }
+        }
+
+        function bindHoldButton(buttonId, key) {
+            const button = document.getElementById(buttonId);
+            if (!button) return;
+
+            const press = (event) => {
+                event.preventDefault();
+                setMovementKeyActive(key, true);
+            };
+
+            const release = (event) => {
+                event.preventDefault();
+                setMovementKeyActive(key, false);
+            };
+
+            button.addEventListener('mousedown', press);
+            button.addEventListener('touchstart', press, { passive: false });
+            button.addEventListener('mouseup', release);
+            button.addEventListener('mouseleave', release);
+            button.addEventListener('touchend', release);
+            button.addEventListener('touchcancel', release);
+        }
+
+        function initROVControls() {
+            if (inputInitialized) return;
+            inputInitialized = true;
+
+            bindHoldButton('btnW', 'w');
+            bindHoldButton('btnA', 'a');
+            bindHoldButton('btnS', 's');
+            bindHoldButton('btnD', 'd');
+
+            const ctrlButton = document.getElementById('btnCtrl');
+            const shiftButton = document.getElementById('btnShift');
+            const stopButton = document.getElementById('btnStop');
+
+            if (ctrlButton) ctrlButton.addEventListener('click', () => toggleBallast('down'));
+            if (shiftButton) shiftButton.addEventListener('click', () => toggleBallast('up'));
+            if (stopButton) stopButton.addEventListener('click', () => hardStop());
+
+            updateBallastHighlight();
+
+            window.addEventListener('keydown', (event) => {
+                const tag = (event.target && event.target.tagName) ? event.target.tagName.toLowerCase() : '';
+                if (tag === 'input' || tag === 'textarea' || tag === 'select') return;
+
+                const key = event.key.toLowerCase();
+                if (event.repeat && (key === 'w' || key === 'a' || key === 's' || key === 'd')) return;
+                if (event.repeat && (key === 'shift' || key === 'control' || key === ' ')) return;
+
+                if (key === 'w' || key === 'a' || key === 's' || key === 'd') {
+                    event.preventDefault();
+                    setMovementKeyActive(key, true);
+                } else if (key === 'shift') {
+                    event.preventDefault();
+                    toggleBallast('up');
+                } else if (key === 'control') {
+                    event.preventDefault();
+                    toggleBallast('down');
+                } else if (key === ' ') {
+                    event.preventDefault();
+                    hardStop();
+                }
+            });
+
+            window.addEventListener('keyup', (event) => {
+                const key = event.key.toLowerCase();
+                if (key === 'w' || key === 'a' || key === 's' || key === 'd') {
+                    event.preventDefault();
+                    setMovementKeyActive(key, false);
+                }
+            });
+
+            window.addEventListener('blur', () => {
+                ['w', 'a', 's', 'd'].forEach((k) => setMovementKeyActive(k, false));
+            });
         }
 
         // ====================================================================
@@ -808,6 +1096,7 @@
             initCharts();
             initWebSocket();
             initCamera();
+            initROVControls();
         });
     </script>
 </body>
