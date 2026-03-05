@@ -93,19 +93,25 @@ async function motorApiCmd(command) {
   return text.trim();
 }
 
-function parseActuatorState(stateLine) {
+function parseMotorState(stateLine) {
   const homedMatch = stateLine.match(/\bACT_HOMED=(\d)/);
   const posMatch = stateLine.match(/\bACT_POS=(-?\d+)/);
+  const powerMatch = stateLine.match(/\bPWR=(\d)/);
   return {
-    homed: homedMatch ? homedMatch[1] === '1' : false,
-    pos: posMatch ? parseInt(posMatch[1], 10) : null
+    actuator: {
+      homed: homedMatch ? homedMatch[1] === '1' : false,
+      pos: posMatch ? parseInt(posMatch[1], 10) : null
+    },
+    power: {
+      on: powerMatch ? powerMatch[1] === '1' : false
+    }
   };
 }
 
 async function ensureActuatorHomed() {
   const stateLine = await motorApiGet('/state');
-  const actuator = parseActuatorState(stateLine);
-  if (!actuator.homed) {
+  const parsed = parseMotorState(stateLine);
+  if (!parsed.actuator.homed) {
     await motorApiCmd('V1 ACT HOME');
   }
 }
@@ -119,6 +125,11 @@ async function setBallastMode(mode) {
   await ensureActuatorHomed();
   await motorApiCmd(`V1 ACT GOTO=${target}`);
   return { mode, target };
+}
+
+async function getPowerState() {
+  const stateLine = await motorApiGet('/state');
+  return parseMotorState(stateLine).power.on;
 }
 
 app.post('/api/rov/thrusters', async (req, res) => {
@@ -163,6 +174,40 @@ app.post('/api/rov/stop', async (req, res) => {
     return res.json({ ok: true, stopReply, ballast });
   } catch (err) {
     console.error('❌ /api/rov/stop error:', err.message);
+    return res.status(502).json({ ok: false, error: err.message });
+  }
+});
+
+app.get('/api/rov/power', async (req, res) => {
+  try {
+    const on = await getPowerState();
+    return res.json({ ok: true, on });
+  } catch (err) {
+    console.error('❌ /api/rov/power GET error:', err.message);
+    return res.status(502).json({ ok: false, error: err.message });
+  }
+});
+
+app.post('/api/rov/power', async (req, res) => {
+  try {
+    const requested = String(req.body.state || '').toLowerCase();
+    let targetOn;
+
+    if (requested === 'on') {
+      targetOn = true;
+    } else if (requested === 'off') {
+      targetOn = false;
+    } else if (requested === 'toggle') {
+      targetOn = !(await getPowerState());
+    } else {
+      return res.status(400).json({ error: 'state must be one of: on, off, toggle' });
+    }
+
+    const command = targetOn ? 'V1 PWR ON' : 'V1 PWR OFF';
+    const reply = await motorApiCmd(command);
+    return res.json({ ok: true, on: targetOn, command, reply });
+  } catch (err) {
+    console.error('❌ /api/rov/power POST error:', err.message);
     return res.status(502).json({ ok: false, error: err.message });
   }
 });
