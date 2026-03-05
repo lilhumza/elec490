@@ -190,6 +190,8 @@
             border-radius: 8px;
             padding: 14px;
             background: var(--color-bg-primary);
+            --key-size: 64px;
+            --key-gap: 10px;
         }
 
         .rov-hint {
@@ -198,17 +200,51 @@
             margin-bottom: 12px;
         }
 
-        .rov-grid {
+        .rov-layout {
+            display: flex;
+            justify-content: center;
+            align-items: flex-start;
+            gap: 24px;
+            flex-wrap: wrap;
+        }
+
+        .rov-left {
+            display: flex;
+            flex-direction: column;
+            gap: var(--key-gap);
+            margin-right: 8px;
+        }
+
+        .rov-left .rov-button {
+            width: calc(var(--key-size) * 2 + var(--key-gap));
+            height: var(--key-size);
+        }
+
+        .rov-keyboard {
             display: grid;
-            grid-template-columns: repeat(4, minmax(80px, 1fr));
-            gap: 10px;
-            align-items: stretch;
+            grid-template-columns: repeat(3, var(--key-size));
+            grid-template-rows: repeat(2, var(--key-size));
+            gap: var(--key-gap);
+            align-items: center;
+            justify-items: center;
+            justify-content: center;
+        }
+
+        .key-w { grid-column: 2; grid-row: 1; }
+        .key-a { grid-column: 1; grid-row: 2; }
+        .key-s { grid-column: 2; grid-row: 2; }
+        .key-d { grid-column: 3; grid-row: 2; }
+
+        .rov-right {
+            display: flex;
+            align-items: flex-start;
+            gap: var(--key-gap);
         }
 
         .rov-button {
-            padding: 12px 8px;
+            padding: 10px 8px;
             border: 1px solid var(--color-border);
-            border-radius: 8px;
+            border-radius: 10px;
             background: var(--color-surface);
             color: var(--color-text-primary);
             font-size: 14px;
@@ -216,6 +252,7 @@
             cursor: pointer;
             min-height: 56px;
             user-select: none;
+            transition: background 120ms ease, border-color 120ms ease, box-shadow 120ms ease;
         }
 
         .rov-button.active {
@@ -224,15 +261,38 @@
             box-shadow: 0 0 0 2px rgba(33, 128, 141, 0.2);
         }
 
+        .rov-key {
+            width: var(--key-size);
+            height: var(--key-size);
+            min-height: var(--key-size);
+            font-size: 24px;
+            letter-spacing: 0.5px;
+            padding: 0;
+        }
+
         .rov-stop {
-            grid-column: span 2;
+            width: calc(var(--key-size) * 2 + var(--key-gap));
+            height: calc(var(--key-size) * 2 + var(--key-gap));
+            min-height: calc(var(--key-size) * 2 + var(--key-gap));
             background: rgba(192, 21, 47, 0.9);
             color: #fff;
-            font-size: 16px;
+            font-size: 20px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
         }
 
         .rov-stop:hover {
             background: rgba(192, 21, 47, 1);
+        }
+
+        .rov-power {
+            width: calc(var(--key-size) + 24px);
+            height: calc(var(--key-size) * 2 + var(--key-gap));
+            min-height: calc(var(--key-size) * 2 + var(--key-gap));
+            line-height: 1.2;
+            white-space: normal;
+            word-break: break-word;
         }
 
         .status {
@@ -354,8 +414,22 @@
                 grid-template-columns: 1fr;
             }
 
-            .rov-grid {
-                grid-template-columns: repeat(2, minmax(120px, 1fr));
+            .rov-control-panel {
+                --key-size: 56px;
+                --key-gap: 8px;
+            }
+
+            .rov-layout {
+                gap: 14px;
+            }
+
+            .rov-left {
+                margin-right: 0;
+            }
+
+            .rov-right {
+                width: 100%;
+                justify-content: center;
             }
 
             header {
@@ -391,17 +465,23 @@
 
             <div class="rov-control-panel">
                 <div class="rov-hint">
-                    ROV Controls: hold W/A/S/D for thrust, toggle Shift/Ctrl for ballast, toggle 12V Power, Space or STOP to halt.
+                    Keyboard-style controls: hold W/A/S/D to thrust, toggle Shift/Ctrl ballast, and use STOP/Space for immediate halt.
                 </div>
-                <div class="rov-grid">
-                    <button class="rov-button" id="btnW" data-key="w">W Forward</button>
-                    <button class="rov-button" id="btnA" data-key="a">A Left</button>
-                    <button class="rov-button" id="btnS" data-key="s">S Back</button>
-                    <button class="rov-button" id="btnD" data-key="d">D Right</button>
-                    <button class="rov-button" id="btnCtrl">Ctrl Sink</button>
-                    <button class="rov-button" id="btnShift">Shift Float</button>
-                    <button class="rov-button" id="btnPower">12V Power</button>
-                    <button class="rov-button rov-stop" id="btnStop">STOP (Space)</button>
+                <div class="rov-layout">
+                    <div class="rov-left">
+                        <button class="rov-button" id="btnCtrl">Ctrl Sink</button>
+                        <button class="rov-button" id="btnShift">Shift Float</button>
+                    </div>
+                    <div class="rov-keyboard">
+                        <button class="rov-button rov-key key-w" id="btnW" data-key="w" title="Forward">W</button>
+                        <button class="rov-button rov-key key-a" id="btnA" data-key="a" title="Turn Left">A</button>
+                        <button class="rov-button rov-key key-s" id="btnS" data-key="s" title="Backward">S</button>
+                        <button class="rov-button rov-key key-d" id="btnD" data-key="d" title="Turn Right">D</button>
+                    </div>
+                    <div class="rov-right">
+                        <button class="rov-button rov-stop" id="btnStop">STOP (Space)</button>
+                        <button class="rov-button rov-power" id="btnPower">12V Power</button>
+                    </div>
                 </div>
             </div>
         </div>
