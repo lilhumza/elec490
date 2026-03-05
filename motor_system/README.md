@@ -128,6 +128,16 @@ Server listens on:
 
   * `V1 ACT STOP`
 
+### 12V Supply Enable
+
+* Turn 12V supply enable signal on:
+
+  * `V1 PWR ON`
+
+* Turn 12V supply enable signal off:
+
+  * `V1 PWR OFF`
+
 ---
 
 ## Calibration Notes (Actuator)
@@ -225,6 +235,18 @@ curl -X POST http://localhost:8080/cmd \
 curl -X POST http://localhost:8080/cmd \
   -H "Content-Type: text/plain" \
   --data 'V1 STOP'
+```
+
+### 12V Supply
+
+```bash
+curl -X POST http://localhost:8080/cmd \
+  -H "Content-Type: text/plain" \
+  --data 'V1 PWR ON'
+
+curl -X POST http://localhost:8080/cmd \
+  -H "Content-Type: text/plain" \
+  --data 'V1 PWR OFF'
 ```
 
 ---
