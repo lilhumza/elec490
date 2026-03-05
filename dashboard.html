@@ -391,7 +391,7 @@
 
             <div class="rov-control-panel">
                 <div class="rov-hint">
-                    ROV Controls: hold W/A/S/D for thrust, toggle Shift/Ctrl for ballast, Space or STOP to halt.
+                    ROV Controls: hold W/A/S/D for thrust, toggle Shift/Ctrl for ballast, toggle 12V Power, Space or STOP to halt.
                 </div>
                 <div class="rov-grid">
                     <button class="rov-button" id="btnW" data-key="w">W Forward</button>
@@ -400,6 +400,7 @@
                     <button class="rov-button" id="btnD" data-key="d">D Right</button>
                     <button class="rov-button" id="btnCtrl">Ctrl Sink</button>
                     <button class="rov-button" id="btnShift">Shift Float</button>
+                    <button class="rov-button" id="btnPower">12V Power</button>
                     <button class="rov-button rov-stop" id="btnStop">STOP (Space)</button>
                 </div>
             </div>
@@ -497,6 +498,7 @@
         let maxDataPoints = 30; // ← CHANGED: Limit to 30 data points max
         let activeMovementKeys = new Set();
         let ballastMode = 'neutral'; // neutral | up | down
+        let motorPowerOn = false;
         let lastThrusterSignature = '';
         let inputInitialized = false;
 
@@ -704,6 +706,36 @@
             shiftButton.classList.toggle('active', ballastMode === 'up');
         }
 
+        function updatePowerHighlight() {
+            const powerButton = document.getElementById('btnPower');
+            if (!powerButton) return;
+            powerButton.classList.toggle('active', motorPowerOn);
+        }
+
+        async function refreshPowerState() {
+            try {
+                const response = await fetch('/api/rov/power');
+                if (!response.ok) {
+                    throw new Error(`HTTP ${response.status}`);
+                }
+                const data = await response.json();
+                motorPowerOn = !!data.on;
+                updatePowerHighlight();
+            } catch (err) {
+                console.error('Power state fetch failed:', err);
+            }
+        }
+
+        async function togglePower() {
+            try {
+                const data = await postJson('/api/rov/power', { state: 'toggle' });
+                motorPowerOn = !!data.on;
+                updatePowerHighlight();
+            } catch (err) {
+                console.error('Power toggle failed:', err);
+            }
+        }
+
         async function setBallast(targetMode) {
             try {
                 await postJson('/api/rov/ballast', { state: targetMode });
@@ -770,13 +802,17 @@
 
             const ctrlButton = document.getElementById('btnCtrl');
             const shiftButton = document.getElementById('btnShift');
+            const powerButton = document.getElementById('btnPower');
             const stopButton = document.getElementById('btnStop');
 
             if (ctrlButton) ctrlButton.addEventListener('click', () => toggleBallast('down'));
             if (shiftButton) shiftButton.addEventListener('click', () => toggleBallast('up'));
+            if (powerButton) powerButton.addEventListener('click', () => togglePower());
             if (stopButton) stopButton.addEventListener('click', () => hardStop());
 
             updateBallastHighlight();
+            updatePowerHighlight();
+            refreshPowerState();
 
             window.addEventListener('keydown', (event) => {
                 const tag = (event.target && event.target.tagName) ? event.target.tagName.toLowerCase() : '';
