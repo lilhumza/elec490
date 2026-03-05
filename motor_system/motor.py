@@ -35,6 +35,15 @@ ACT = {
     "invert": False,
 }
 
+# -------------------------
+# 12V motor supply enable (digital)
+# -------------------------
+# BCM 26 is intentionally chosen because it is not used by pumps/actuator pins.
+PWR = {
+    "pin": 26,
+    "active_high": True,
+}
+
 # Calibration knob:
 ACT_FULL_MS = 3250          # time from 0% (retracted) -> 100% (extended)
 # Above value was ~3.25+ for 0-100 on 12V DC PSU.
@@ -59,6 +68,10 @@ lgpio.gpio_claim_output(h, ACT["in2"])
 lgpio.gpio_claim_output(h, ACT["en"])
 lgpio.gpio_write(h, ACT["en"], 0)
 
+# init 12V supply enable pin (default OFF)
+lgpio.gpio_claim_output(h, PWR["pin"])
+lgpio.gpio_write(h, PWR["pin"], 0 if PWR["active_high"] else 1)
+
 # last commanded values (int percent)
 state = {name: 0 for name in MOTORS.keys()}
 
@@ -68,6 +81,11 @@ act_state = {
     "homed": False,
     "moving": False,
     "target": None,     # float target when moving
+}
+
+# 12V supply state
+power_state = {
+    "enabled": False
 }
 
 # -------------------------
@@ -110,6 +128,15 @@ def set_motor_pct(name: str, pct: int):
     duty_pct = int(abs(pct))  # lgpio duty is percent 0..100
     lgpio.tx_pwm(h, cfg["pwm"], PWM_HZ, duty_pct)
     state[name] = pct
+
+def set_power(enabled: bool):
+    if not isinstance(enabled, bool):
+        raise ValueError("TYPE power must be bool")
+    gpio_val = 1 if enabled else 0
+    if not PWR["active_high"]:
+        gpio_val = 0 if enabled else 1
+    lgpio.gpio_write(h, PWR["pin"], gpio_val)
+    power_state["enabled"] = enabled
 
 # -------------------------
 # Actuator helpers
@@ -197,6 +224,10 @@ def parse_cmd_line(line: str):
       V1 ACT HOME
       V1 ACT STOP
       V1 ACT GOTO=35
+
+    12V supply:
+      V1 PWR ON
+      V1 PWR OFF
     """
     line = line.strip()
     if not line:
@@ -271,6 +302,16 @@ def parse_cmd_line(line: str):
 
         raise ValueError("SYNTAX ACT unknown subcommand")
 
+    if verb == "PWR":
+        if len(parts) != 3:
+            raise ValueError("SYNTAX PWR requires exactly one subcommand")
+        sub = parts[2].upper()
+        if sub == "ON":
+            return ("PWR_SET", {"enabled": True})
+        if sub == "OFF":
+            return ("PWR_SET", {"enabled": False})
+        raise ValueError("SYNTAX PWR expected ON or OFF")
+
     raise ValueError(f"SYNTAX unknown verb {verb}")
 
 # -------------------------
@@ -293,7 +334,8 @@ class Handler(BaseHTTPRequestHandler):
             f"ACT_MOVING={1 if act_state['moving'] else 0} "
             f"ACT_TARGET={'-' if act_state['target'] is None else int(round(act_state['target']))}"
         )
-        return f"{s} {a}"
+        p = f"PWR={1 if power_state['enabled'] else 0}"
+        return f"{s} {a} {p}"
 
     def do_GET(self):
         if self.path == "/health":
@@ -337,6 +379,10 @@ class Handler(BaseHTTPRequestHandler):
                 act_goto(payload["target"])
                 return self._send_text(200, "OK V1")
 
+            if verb == "PWR_SET":
+                set_power(payload["enabled"])
+                return self._send_text(200, "OK V1")
+
             return self._send_text(400, "ERR V1 SYNTAX")
 
         except ValueError as e:
@@ -350,6 +396,7 @@ class Handler(BaseHTTPRequestHandler):
 def shutdown(*_):
     stop_all_pumps()
     act_stop()
+    set_power(False)
     lgpio.gpiochip_close(h)
     raise SystemExit(0)
 
@@ -359,12 +406,14 @@ def main():
 
     stop_all_pumps()
     act_stop()
+    set_power(False)
 
     server = HTTPServer((HOST, PORT), Handler)
     print(f"motor.py listening on http://{HOST}:{PORT}")
     print("POST /cmd with:")
     print("  Pumps: 'V1 SET FL=.. FR=.. RL=.. RR=..' (partial ok), 'V1 STOP', 'V1 GET'")
     print("  Act:   'V1 ACT HOME', 'V1 ACT GOTO=NN', 'V1 ACT STOP'")
+    print("  Pwr:   'V1 PWR ON', 'V1 PWR OFF'")
     print(f"Act calibration: ACT_FULL_MS={ACT_FULL_MS} (HOME uses ACT_HOME_MS={ACT_HOME_MS})")
     server.serve_forever()
 
