@@ -19,7 +19,8 @@ const CONFIG = {
   WS_PORT: process.env.WS_PORT || 3001,
   SERIAL_PORT: process.env.SERIAL_PORT || '/dev/ttyACM0',
   SERIAL_BAUD_RATE: parseInt(process.env.SERIAL_BAUD_RATE || '9600'),
-  NODE_ENV: process.env.NODE_ENV || 'development'
+  NODE_ENV: process.env.NODE_ENV || 'development',
+  MOTOR_API_BASE: process.env.MOTOR_API_BASE || 'http://127.0.0.1:8080'
 };
 
 console.log('⚙️  Configuration loaded:');
@@ -27,6 +28,7 @@ console.log(`   HTTP Port: ${CONFIG.HTTP_PORT}`);
 console.log(`   WebSocket Port: ${CONFIG.WS_PORT}`);
 console.log(`   Serial Port: ${CONFIG.SERIAL_PORT}`);
 console.log(`   Baud Rate: ${CONFIG.SERIAL_BAUD_RATE}`);
+console.log(`   Motor API: ${CONFIG.MOTOR_API_BASE}`);
 console.log(`   Environment: ${CONFIG.NODE_ENV}\n`);
 
 // ============================================================================
@@ -53,6 +55,116 @@ app.get('/health', (req, res) => {
     serialConnected: serialPort && serialPort.isOpen,
     connectedClients: wss.clients.size
   });
+});
+
+const BALLAST_TARGETS = {
+  down: 0,     // retracted
+  neutral: 50, // midpoint
+  up: 100      // extended
+};
+
+function clampPercent(value) {
+  const n = Number(value);
+  if (!Number.isFinite(n)) return null;
+  const intVal = Math.trunc(n);
+  if (intVal < -100 || intVal > 100) return null;
+  return intVal;
+}
+
+async function motorApiGet(pathname) {
+  const response = await fetch(`${CONFIG.MOTOR_API_BASE}${pathname}`);
+  const text = await response.text();
+  if (!response.ok) {
+    throw new Error(`Motor API GET ${pathname} failed: ${response.status} ${text.trim()}`);
+  }
+  return text.trim();
+}
+
+async function motorApiCmd(command) {
+  const response = await fetch(`${CONFIG.MOTOR_API_BASE}/cmd`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'text/plain' },
+    body: command
+  });
+  const text = await response.text();
+  if (!response.ok) {
+    throw new Error(`Motor API CMD "${command}" failed: ${response.status} ${text.trim()}`);
+  }
+  return text.trim();
+}
+
+function parseActuatorState(stateLine) {
+  const homedMatch = stateLine.match(/\bACT_HOMED=(\d)/);
+  const posMatch = stateLine.match(/\bACT_POS=(-?\d+)/);
+  return {
+    homed: homedMatch ? homedMatch[1] === '1' : false,
+    pos: posMatch ? parseInt(posMatch[1], 10) : null
+  };
+}
+
+async function ensureActuatorHomed() {
+  const stateLine = await motorApiGet('/state');
+  const actuator = parseActuatorState(stateLine);
+  if (!actuator.homed) {
+    await motorApiCmd('V1 ACT HOME');
+  }
+}
+
+async function setBallastMode(mode) {
+  const target = BALLAST_TARGETS[mode];
+  if (target === undefined) {
+    throw new Error(`Unknown ballast mode: ${mode}`);
+  }
+
+  await ensureActuatorHomed();
+  await motorApiCmd(`V1 ACT GOTO=${target}`);
+  return { mode, target };
+}
+
+app.post('/api/rov/thrusters', async (req, res) => {
+  try {
+    const fl = clampPercent(req.body.FL);
+    const fr = clampPercent(req.body.FR);
+    const rl = clampPercent(req.body.RL);
+    const rr = clampPercent(req.body.RR);
+
+    if ([fl, fr, rl, rr].some((v) => v === null)) {
+      return res.status(400).json({ error: 'FL, FR, RL, RR are required integers in [-100..100]' });
+    }
+
+    const command = `V1 SET FL=${fl} FR=${fr} RL=${rl} RR=${rr}`;
+    const reply = await motorApiCmd(command);
+    return res.json({ ok: true, command, reply });
+  } catch (err) {
+    console.error('❌ /api/rov/thrusters error:', err.message);
+    return res.status(502).json({ ok: false, error: err.message });
+  }
+});
+
+app.post('/api/rov/ballast', async (req, res) => {
+  try {
+    const mode = String(req.body.state || '').toLowerCase();
+    if (!Object.prototype.hasOwnProperty.call(BALLAST_TARGETS, mode)) {
+      return res.status(400).json({ error: 'state must be one of: down, neutral, up' });
+    }
+
+    const result = await setBallastMode(mode);
+    return res.json({ ok: true, ...result });
+  } catch (err) {
+    console.error('❌ /api/rov/ballast error:', err.message);
+    return res.status(502).json({ ok: false, error: err.message });
+  }
+});
+
+app.post('/api/rov/stop', async (req, res) => {
+  try {
+    const stopReply = await motorApiCmd('V1 STOP');
+    const ballast = await setBallastMode('neutral');
+    return res.json({ ok: true, stopReply, ballast });
+  } catch (err) {
+    console.error('❌ /api/rov/stop error:', err.message);
+    return res.status(502).json({ ok: false, error: err.message });
+  }
 });
 
 // ============================================================================
