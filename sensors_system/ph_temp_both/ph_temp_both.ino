@@ -15,8 +15,8 @@ float tempOffset = 0.0;
 
 // ----- pH calibration parameters -----
 // Use calibration across buffer solution to retrieve values.
-float phSlope  = 3.5;   // pH per volt (example rough value)
-float phOffset = 0.0;   // pH offset
+float phSlope  = -153.84;   // pH per volt (example rough value)
+float phOffset = 658.912 + 3;   // pH offset
 
 bool headerPrinted = false;
 
