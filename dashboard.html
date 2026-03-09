@@ -517,10 +517,10 @@
         <div class="cameraBox">
             <div class="chart-container">
                 <div class="chart-title">Live Camera Feed</div>
-                <div class="chart-wrapper">
+                <div class="chart-wrapper" style="transform:scale(-1)">
                     <!-- Replace video with img for MJPG stream -->
                     <img id="cameraFeed" 
-                        src="http://192.168.2.38:5050/?action=stream" 
+                        src="http://localhost:5050/?action=stream" 
                         autoplay 
                         style="width:100%; height:100%; object-fit:cover; border-radius:6px; background:#000;" />
                 </div>
